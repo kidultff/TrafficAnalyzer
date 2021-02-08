@@ -100,6 +100,7 @@ def init_database():
           PRIMARY KEY ("id")
         ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'''
 
+    cursor.execute('SET GLOBAL SQL_MODE=ANSI_QUOTES;')
     cursor.execute(init_dns_sql)
     cursor.execute(init_netflow_sql)
     cursor.execute(init_app_sql)
