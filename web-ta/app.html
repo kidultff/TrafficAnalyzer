@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="stylesheet" href="//cdn.bootcdn.net/ajax/libs/twitter-bootstrap/3.2.0/css/bootstrap.min.css">
+	<link rel="stylesheet" href="//cdn.bootcdn.net/ajax/libs/bootstrap-table/1.18.1/bootstrap-table.min.css">
+</head>
+<body>
+<div class="container">
+	<div class="dropdown">
+		<button type="button" class="btn dropdown-toggle" id="dropdownMenu1" 
+				data-toggle="dropdown">
+			切换日志项
+			<span class="caret"></span>
+		</button>
+		<ul class="dropdown-menu" role="menu" aria-labelledby="dropdownMenu1">
+			<li role="presentation">
+				<a role="menuitem" tabindex="-1" href="./index.html">DNS</a>
+			</li>
+			<li role="presentation">
+				<a role="menuitem" tabindex="-1" href="./tcp.html">TCP/UDP</a>
+			</li>
+			<li role="presentation">
+				<a role="menuitem" tabindex="-1" href="./app.html">应用</a>
+			</li>
+		</ul>
+	</div>
+	<div class="form-inline" id="toolbar">
+		<label>关键词搜索 </label>
+		<input class="form-control mb-2 mr-sm-2" id="smac" type="text" placeholder="MAC地址">
+		<input class="form-control mb-2 mr-sm-2" id="sapp" type="text" placeholder="应用">
+		<button id="search_btn" class="btn btn-default">搜索</button>
+	</div>
+	<table id="table" data-show-columns="true" data-show-refresh="true" data-pagination="true" data-page-size="50"></table>
+</div>
+<script src="//cdn.bootcdn.net/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="//cdn.bootcdn.net/ajax/libs/twitter-bootstrap/3.2.0/js/bootstrap.min.js"></script>
+<script src="//cdn.bootcdn.net/ajax/libs/bootstrap-table/1.18.1/bootstrap-table.js"></script>
+<script src="//cdn.bootcdn.net/ajax/libs/bootstrap-table/1.18.1/locale/bootstrap-table-zh-CN.min.js"></script>
+<script>
+	function timestampToTime(timestamp) {
+		var date = new Date(timestamp * 1000);
+		Y = date.getFullYear() + '-';
+		M = (date.getMonth()+1 < 10 ? '0'+(date.getMonth()+1) : date.getMonth()+1) + '-';
+		D = (date.getDate() < 10 ? '0'+(date.getDate()) : date.getDate()) + ' ';
+		h = (date.getHours() < 10 ? '0'+(date.getHours()) : date.getHours()) + ':';
+		m = (date.getMinutes() < 10 ? '0'+(date.getMinutes()) : date.getMinutes()) + ':';
+		s = (date.getSeconds() < 10 ? '0'+(date.getSeconds()) : date.getSeconds());
+		return M+D+h+m+s;
+	}
+	function ajax_get_dns_list(params){
+		url = './api.php?action=get_app&limit=' + params.data.limit + '&page=' + params.data.page;
+		if(params.data.cond.length > 4)
+			url += ("&cond=" + params.data.cond)
+		console.log(url);
+		$.ajax({
+			url,
+			type: "GET",
+			dataType: "json",
+			success: function(rs){
+				var rows = rs.msg.rows, total = rs.msg.total;
+				for(var i = 0; i < rows.length; i++){
+					rows[i].start_time = timestampToTime(rows[i].start_time);
+					if(rows[i].end_time != 0)
+						rows[i].end_time = timestampToTime(rows[i].end_time);
+					else
+						rows[i].end_time = "-";
+				}
+				params.success({ 
+					total: total,
+					rows: rows
+				});
+			},
+			error: function(rs){
+				console.error(rs)
+			}
+		});
+	}
+	
+	function check_valid(s){
+		if(s[0] == '%') s = s.substr(1);
+		if(s[s.length-1] == '%') s = s.substr(0, s.length - 1);
+		if(s.indexOf('%') != -1) return false;
+		return true;
+	}
+	
+	function get_search_param(){
+		var mac = $('#smac').val(), app = $('#sapp').val();
+		mac = mac.replace(/\；/g, ';').replace(/\*/g, '%').replace(/\-/g, ':').replace(/\ /g, '').toLowerCase().split(';');
+		app = app.replace(/\；/g, ';').replace(/\ /g, '').split(';');
+		params = {}
+		for(var i = 0; i < mac.length; i++){
+			if(mac[i].length == 0) continue;
+			if(mac[i].indexOf('%') != -1){
+				if(params['client_mac[~]'] == undefined) params['client_mac[~]'] = [];
+				if(!check_valid(mac[i])){
+					alert('MAC地址有误！\n"*"不能出现在单个MAC的中间部分！');
+					return "{}";
+				}
+				params['client_mac[~]'].push(mac[i]);
+			}else{
+				if(params['client_mac'] == undefined) params['client_mac'] = [];
+				params['client_mac'].push(mac[i]);
+			}
+		}
+		
+		for(var i = 0; i < app.length; i++){
+			if(app[i].length == 0) continue;
+			if(params['app_name'] == undefined) params['app_name'] = [];
+			params['app_name'].push(app[i]);
+		}
+		return JSON.stringify(params);
+	}
+	$('#search_btn').click(function(){$('#table').bootstrapTable('refresh')});
+
+    $('#table').bootstrapTable({
+		ajax: ajax_get_dns_list,
+		striped : true,
+		pageNumber : 1,
+		pagination : true,
+		sidePagination : 'server',
+		pageSize : 50,
+		toolbar: "#toolbar",
+		queryParams : function(params) {
+			var temp = {
+				limit : params.limit, // 每页显示数量
+				page : params.offset / params.limit, // SQL语句起始索引,
+				cond: get_search_param()
+			};
+			console.log(temp);
+			return temp;
+		},
+		columns: [{
+			field: 'id',
+			title: 'ID'
+		},{
+			field: 'client_mac',
+			title: '客户端'
+		},{
+			field: 'start_time',
+			title: '起始时间'
+		},{
+			field: 'end_time',
+			title: '结束时间'
+		},{
+			field: 'host',
+			title: '主机'
+		},{
+			field: 'app_name',
+			title: '应用名'
+		}]
+	})
+</script>
+</body>
+</html>

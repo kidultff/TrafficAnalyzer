@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="stylesheet" href="//cdn.bootcdn.net/ajax/libs/twitter-bootstrap/3.2.0/css/bootstrap.min.css">
+	<link rel="stylesheet" href="//cdn.bootcdn.net/ajax/libs/bootstrap-table/1.18.1/bootstrap-table.min.css">
+</head>
+<body>
+<div class="container">
+	<div class="dropdown">
+		<button type="button" class="btn dropdown-toggle" id="dropdownMenu1" 
+				data-toggle="dropdown">
+			切换日志项
+			<span class="caret"></span>
+		</button>
+		<ul class="dropdown-menu" role="menu" aria-labelledby="dropdownMenu1">
+			<li role="presentation">
+				<a role="menuitem" tabindex="-1" href="./index.html">DNS</a>
+			</li>
+			<li role="presentation">
+				<a role="menuitem" tabindex="-1" href="./tcp.html">TCP/UDP</a>
+			</li>
+			<li role="presentation">
+				<a role="menuitem" tabindex="-1" href="./app.html">应用</a>
+			</li>
+		</ul>
+	</div>
+	<div class="form-inline" id="toolbar">
+		<label>搜索 </label>
+		<input class="form-control mb-2 mr-sm-2" id="smac" type="text" placeholder="MAC地址">
+		<input class="form-control mb-2 mr-sm-2" id="sip_src" type="text" placeholder="源IP">
+		<input class="form-control mb-2 mr-sm-2" id="sport_src" type="text" placeholder="源端口">
+		<input class="form-control mb-2 mr-sm-2" id="sip_dst" type="text" placeholder="目的IP">
+		<input class="form-control mb-2 mr-sm-2" id="sport_dst" type="text" placeholder="目的端口">
+		<input class="form-control mb-2 mr-sm-2" id="shost" type="text" placeholder="主机名">
+		<button id="search_btn" class="btn btn-default">搜索</button>
+	</div>
+	<table id="table" data-show-columns="true" data-show-refresh="true" data-pagination="true" data-page-size="50"></table>
+</div>
+<script src="//cdn.bootcdn.net/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+<script src="//cdn.bootcdn.net/ajax/libs/twitter-bootstrap/3.2.0/js/bootstrap.min.js"></script>
+<script src="//cdn.bootcdn.net/ajax/libs/bootstrap-table/1.18.1/bootstrap-table.js"></script>
+<script src="//cdn.bootcdn.net/ajax/libs/bootstrap-table/1.18.1/locale/bootstrap-table-zh-CN.min.js"></script>
+<script>
+	function timestampToTime(timestamp) {
+		var date = new Date(timestamp * 1000);
+		Y = date.getFullYear() + '-';
+		M = (date.getMonth()+1 < 10 ? '0'+(date.getMonth()+1) : date.getMonth()+1) + '-';
+		D = (date.getDate() < 10 ? '0'+(date.getDate()) : date.getDate()) + ' ';
+		h = (date.getHours() < 10 ? '0'+(date.getHours()) : date.getHours()) + ':';
+		m = (date.getMinutes() < 10 ? '0'+(date.getMinutes()) : date.getMinutes()) + ':';
+		s = (date.getSeconds() < 10 ? '0'+(date.getSeconds()) : date.getSeconds());
+		return M+D+h+m+s;
+	}
+	function ajax_get_netflow_list(params){
+		url = './api.php?action=get_tcp_netflow&limit=' + params.data.limit + '&page=' + params.data.page;
+		if(params.data.cond.length > 4)
+			url += ("&cond=" + params.data.cond)
+		console.log(url);
+		$.ajax({
+			url,
+			type: "GET",
+			dataType: "json",
+			success: function(rs){
+				var rows = rs.msg.rows, total = rs.msg.total;
+				for(var i = 0; i < rows.length; i++){
+					rows[i].dur = rows[i].time_end - rows[i].time_start + "秒";
+					rows[i].time_start = timestampToTime(rows[i].time_start);
+					rows[i].src = rows[i].ip_src + ':' + rows[i].port_src;
+					rows[i].dst = rows[i].ip_dst + ':' + rows[i].port_dst;
+					rows[i].type = (rows[i].type == 6 ? "TCP" : "UDP");
+					rows[i].pkt_list = JSON.parse(rows[i].pkt_list);
+					var payload_len = rows[i].len <= 1024 ? (rows[i].len + "B ")  : ((rows[i].len / 1024).toFixed(2) + "KB ")
+					rows[i].payload = payload_len + "(" + rows[i].pkt_list.length + "包)";
+				}
+				params.success({ 
+					total: total,
+					rows: rows
+				});
+			},
+			error: function(rs){
+				console.error(rs)
+			}
+		});
+	}
+	
+	function check_valid(s){
+		if(s[0] == '%') s = s.substr(1);
+		if(s[s.length-1] == '%') s = s.substr(0, s.length - 1);
+		if(s.indexOf('%') != -1) return false;
+		return true;
+	}
+	
+	function get_search_param(){
+		var mac = $('#smac').val(), 
+		ip_src = $('#sip_src').val(), 
+		ip_dst = $('#sip_dst').val(), 
+		port_src = $('#sport_src').val(), 
+		port_dst = $('#sport_dst').val()
+		host = $('#shost').val();
+		
+		mac = mac.replace(/\；/g, ';').replace(/\*/g, '%').replace(/\-/g, ':').replace(/\ /g, '').toLowerCase().split(';');
+		ip_src = ip_src.replace(/\；/g, ';').replace(/\*/g, '%').replace(/\ /g, '').split(';');
+		ip_dst = ip_dst.replace(/\；/g, ';').replace(/\*/g, '%').replace(/\ /g, '').split(';');
+		port_src = port_src.replace(/\；/g, ';').replace(/\ /g, '').split(';');
+		port_dst = port_dst.replace(/\；/g, ';').replace(/\ /g, '').split(';');
+		host = host.replace(/\*/g, '%').replace(/\；/g, ';').replace(/\ /g, '').split(';');
+		params = {}
+		
+		for(var i = 0; i < mac.length; i++){
+			if(mac[i].length == 0) continue;
+			if(mac[i].indexOf('%') != -1){
+				if(params['client_mac[~]'] == undefined) params['client_mac[~]'] = [];
+				if(!check_valid(mac[i])){
+					alert('MAC地址有误！\n"*"不能出现在单个MAC的中间部分！');
+					return "{}";
+				}
+				params['client_mac[~]'].push(mac[i]);
+			}else{
+				if(params['client_mac'] == undefined) params['client_mac'] = [];
+				params['client_mac'].push(mac[i]);
+			}
+		}
+		
+		for(var i = 0; i < ip_src.length; i++){
+			if(ip_src[i].length == 0) continue;
+			if(ip_src[i].indexOf('%') != -1){
+				if(params['ip_src[~]'] == undefined) params['ip_src[~]'] = [];
+				if(!check_valid(ip_src[i])){
+					alert('源IP有误！\n"*"不能出现在源IP的中间部分！');
+					return "{}";
+				}
+				params['ip_src[~]'].push(ip_src[i]);
+			}else{
+				if(params['ip_src'] == undefined) params['ip_src'] = [];
+				params['ip_src'].push(ip_src[i]);
+			}
+		}
+		
+		for(var i = 0; i < ip_dst.length; i++){
+			if(ip_dst[i].length == 0) continue;
+			if(ip_dst[i].indexOf('%') != -1){
+				if(params['ip_dst[~]'] == undefined) params['ip_dst[~]'] = [];
+				if(!check_valid(ip_dst[i])){
+					alert('目的IP有误！\n"*"不能出现在源IP的中间部分！');
+					return "{}";
+				}
+				params['ip_dst[~]'].push(ip_dst[i]);
+			}else{
+				if(params['ip_dst'] == undefined) params['ip_dst'] = [];
+				params['ip_dst'].push(ip_dst[i]);
+			}
+		}
+		
+		for(var i = 0; i < port_src.length; i++){
+			if(port_src[i].length == 0) continue;
+			reg = /^\d+$/
+			if(!reg.test(port_src[i])){
+				alert('源端口有误！\n端口只能是数字，不可以使用通配符或其他特殊字符');
+				return "{}";
+			}
+			if(params['port_src'] == undefined) params['port_src'] = [];
+			params['port_src'].push(port_src[i]);
+		}
+		
+		for(var i = 0; i < port_dst.length; i++){
+			if(port_dst[i].length == 0) continue;
+			reg = /^\d+$/
+			if(!reg.test(port_dst[i])){
+				alert('目的端口有误！\n端口只能是数字，不可以使用通配符或其他特殊字符');
+				return "{}";
+			}
+			if(params['port_dst'] == undefined) params['port_dst'] = [];
+			params['port_dst'].push(port_dst[i]);
+		}
+		
+		for(var i = 0; i < host.length; i++){
+			if(host[i].length == 0) continue;
+			if(host[i].indexOf('%') != -1){
+				if(params['host[~]'] == undefined) params['host[~]'] = [];
+				if(!check_valid(host[i])){
+					alert('host有误！\n"*"不能出现在单个host的中间部分！');
+					return "{}";
+				}
+				params['host[~]'].push(host[i]);
+			}else{
+				if(params['host'] == undefined) params['host'] = [];
+				params['host'].push(host[i]);
+			}
+		}
+		
+		return JSON.stringify(params);
+	}
+	
+	$('#search_btn').click(function(){$('#table').bootstrapTable('refresh')});
+
+    $('#table').bootstrapTable({
+		ajax: ajax_get_netflow_list,
+		striped : true,
+		pageNumber : 1,
+		pagination : true,
+		sidePagination : 'server',
+		pageSize : 50,
+		detailView: true,
+		toolbar: "#toolbar",
+		queryParams : function(params) {
+			var temp = {
+				limit : params.limit, // 每页显示数量
+				page : params.offset / params.limit, // SQL语句起始索引,
+				cond: get_search_param()
+			};
+			console.log(temp);
+			return temp;
+		},
+		columns: [{
+			field: 'id',
+			title: 'ID'
+		},{
+			field: 'client_mac',
+			title: '客户端'
+		},{
+			field: 'type',
+			title: '协议'
+		},{
+			field: 'src',
+			title: '源'
+		},{
+			field: 'dst',
+			title: '目的'
+		},{
+			field: 'host',
+			title: '主机名'
+		},{
+			field: 'time_start',
+			title: '起始时间'
+		},{
+			field: 'dur',
+			title: '持续时间'
+		},{
+			field: 'payload',
+			title: '负载量'
+		}],
+		onExpandRow: function (index, row, $detail) {
+			var pkt_list = row.pkt_list;
+			var cur_table = $detail.html('<table></table>').find('table');
+			var rows = [];
+			if(row.type == "TCP"){
+				for(var i = 0; i < pkt_list.length; i++){
+					pkt_list[i].dir = (pkt_list[i].d==1) ? "C->S" : "S->C";
+					var flag_table = {S:"SYN", P:"PSH", A:"ACK", R:"RST", F:"FIN", U:"URG", E:"ECE", W:"CWR"};
+					pkt_list[i].flag = "";
+					for(var j = 0; j < pkt_list[i].f.length; j++){
+						pkt_list[i].flag += (flag_table[pkt_list[i].f[j]] + ' ');
+					}
+					rows.push(pkt_list[i]);
+				}
+				var rowStyle = function(row, idx){
+					var style;
+					if(pkt_list[idx].f.indexOf("S") != -1) style = {classes: "info"};
+					else if(pkt_list[idx].f.indexOf("F") != -1) style = {classes: "success"};
+					else if(pkt_list[idx].f.indexOf("R") != -1) style = {classes: "danger"};
+					else style = {classes: "active"};
+					return style;
+				}
+				$(cur_table).bootstrapTable({
+					pageNumber : 1,
+					pagination : true,
+					pageSize: 10,
+					data: rows,
+					rowStyle:rowStyle,
+					columns: [{
+						field: 'dir',
+						title: '方向'
+					},{
+						field: 'flag',
+						title: '标志'
+					},{
+						field: 'l',
+						title: '负载长度'
+					},{
+						field: 't',
+						title: '时间'
+					}]
+				});
+			}else{	// UDP
+				for(var i = 0; i < pkt_list.length; i++){
+					pkt_list[i].dir = (pkt_list[i].d==1) ? "C->S" : "S->C";
+					rows.push(pkt_list[i]);
+				}
+				$(cur_table).bootstrapTable({
+					pageNumber : 1,
+					pagination : true,
+					pageSize: 10,
+					data: rows,
+					columns: [{
+						field: 'dir',
+						title: '方向'
+					},{
+						field: 'l',
+						title: '负载长度'
+					},{
+						field: 't',
+						title: '时间'
+					}]
+				});
+			}
+		}
+
+	})
+</script>
+</body>
+</html>
